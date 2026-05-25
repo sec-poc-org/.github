@@ -44,6 +44,17 @@ jobs:
         continue-on-error: true
         run: govulncheck -format sarif ./... > govulncheck.sarif
 
+      - name: Sanitize SARIF (workaround for govulncheck duplicate-tags bug)
+        # govulncheck emits duplicate strings in `properties.tags` for some rules,
+        # which violates the SARIF schema and causes upload-sarif to reject the file:
+        #   "instance.runs[0].tool.driver.rules[N].properties.tags contains duplicate item"
+        # De-duplicate the tags array per rule before uploading.
+        if: always() && hashFiles(format('{0}/govulncheck.sarif', inputs.working-directory)) != ''
+        run: |
+          jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (if . then unique else . end)' \
+            govulncheck.sarif > govulncheck.sanitized.sarif
+          mv govulncheck.sanitized.sarif govulncheck.sarif
+
       - name: Upload SARIF to Code Scanning
         if: always() && hashFiles(format('{0}/govulncheck.sarif', inputs.working-directory)) != ''
         uses: github/codeql-action/upload-sarif@v3
