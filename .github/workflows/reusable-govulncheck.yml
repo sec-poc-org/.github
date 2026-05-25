@@ -1,0 +1,58 @@
+name: Reusable govulncheck
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: '.'
+        description: Directory containing go.mod
+      go-version-file:
+        type: string
+        default: 'go.mod'
+        description: Path (relative to working-directory) to a file containing the Go version
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required for SARIF upload to Code Scanning
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ inputs.working-directory }}/${{ inputs.go-version-file }}
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck (human-readable, for the run log)
+        id: vulncheck
+        continue-on-error: true
+        run: govulncheck ./...
+
+      - name: Run govulncheck (SARIF, for Code Scanning upload)
+        if: always()
+        continue-on-error: true
+        run: govulncheck -format sarif ./... > govulncheck.sarif
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && hashFiles(format('{0}/govulncheck.sarif', inputs.working-directory)) != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.working-directory }}/govulncheck.sarif
+          category: govulncheck
+
+      - name: Fail on findings
+        if: ${{ steps.vulncheck.outcome == 'failure' }}
+        run: |
+          echo "::error::govulncheck found vulnerabilities reachable from this module."
+          exit 1
