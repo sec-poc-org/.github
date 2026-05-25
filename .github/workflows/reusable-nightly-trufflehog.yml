@@ -1,0 +1,43 @@
+name: Reusable Nightly TruffleHog
+
+on:
+  workflow_call:
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
+        description: Optional Slack webhook for alerts on verified findings
+
+jobs:
+  trufflehog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog scan (verified only)
+        id: trufflehog
+        uses: trufflesecurity/trufflehog@v3.83.0
+        with:
+          extra_args: --only-verified --no-update
+        continue-on-error: true
+
+      - name: Notify Slack on verified finding
+        if: ${{ steps.trufflehog.outcome == 'failure' && secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          payload: |
+            {
+              "text": "TruffleHog found *verified* live secrets in ${{ github.repository }} — investigate at ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+
+      - name: Fail job on verified finding
+        if: ${{ steps.trufflehog.outcome == 'failure' }}
+        run: |
+          echo "::error::TruffleHog found verified live secrets. See preceding step output."
+          exit 1
