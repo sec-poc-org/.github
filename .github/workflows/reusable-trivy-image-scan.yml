@@ -44,7 +44,7 @@ jobs:
           tags: localhost/${{ github.event.repository.name }}:pr-scan
 
       - name: Trivy image scan (table for log readability)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: localhost/${{ github.event.repository.name }}:pr-scan
           format: 'table'
@@ -53,7 +53,7 @@ jobs:
           exit-code: '0'
 
       - name: Trivy image scan (SARIF for upload)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: localhost/${{ github.event.repository.name }}:pr-scan
           format: 'sarif'
