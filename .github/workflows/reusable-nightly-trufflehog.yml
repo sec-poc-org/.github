@@ -27,7 +27,8 @@ jobs:
         id: trufflehog
         uses: trufflesecurity/trufflehog@v3.83.0
         with:
-          extra_args: --only-verified --no-update
+          # NB: the action wrapper passes --no-update internally; do not include it here (duplicates fail).
+          extra_args: --only-verified
         continue-on-error: true
 
       - name: Notify Slack on verified finding
