@@ -2,6 +2,15 @@ name: Reusable Nightly TruffleHog
 
 on:
   workflow_call:
+    inputs:
+      trufflehog-extra-args:
+        type: string
+        default: '--only-verified'
+        description: >
+          Extra args passed to TruffleHog. Defaults to --only-verified for the production
+          contract (any finding = real incident). Override to '' to scan for any
+          pattern match (useful for ad-hoc audits and PoC testing). The action wrapper
+          already passes --no-update internally, so do not include it here.
     secrets:
       SLACK_WEBHOOK_URL:
         required: false
@@ -23,12 +32,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: TruffleHog scan (verified only)
+      - name: TruffleHog scan
         id: trufflehog
         uses: trufflesecurity/trufflehog@v3.83.0
         with:
-          # NB: the action wrapper passes --no-update internally; do not include it here (duplicates fail).
-          extra_args: --only-verified
+          extra_args: ${{ inputs.trufflehog-extra-args }}
         continue-on-error: true
 
       - name: Notify Slack on verified finding
