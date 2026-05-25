@@ -1,0 +1,80 @@
+name: Reusable Trivy Image Scan
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile-path:
+        type: string
+        default: 'Dockerfile'
+      build-context:
+        type: string
+        default: '.'
+      severity:
+        type: string
+        default: 'HIGH,CRITICAL'
+        description: Comma-separated severity threshold passed to Trivy (LOW,MEDIUM,HIGH,CRITICAL)
+      fail-on-findings:
+        type: boolean
+        default: false
+        description: >
+          Whether to fail the workflow when Trivy finds vulnerabilities at-or-above `severity`.
+          Phase 3f recommends warm-up as warn-only (false), then tighten in waves.
+
+jobs:
+  trivy-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # for SARIF upload to Code Scanning
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build-context }}
+          file: ${{ inputs.dockerfile-path }}
+          push: false
+          load: true
+          tags: localhost/${{ github.event.repository.name }}:pr-scan
+
+      - name: Trivy image scan (table for log readability)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: localhost/${{ github.event.repository.name }}:pr-scan
+          format: 'table'
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Trivy image scan (SARIF for upload)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: localhost/${{ github.event.repository.name }}:pr-scan
+          format: 'sarif'
+          output: 'trivy-image.sarif'
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Count findings + maybe fail
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        run: |
+          count=$(jq '[.runs[].results[]] | length' trivy-image.sarif)
+          echo "Trivy findings at ${{ inputs.severity }} severity: $count"
+          if [ "${{ inputs.fail-on-findings }}" = "true" ] && [ "$count" -gt 0 ]; then
+            echo "::error::Trivy image scan found $count vulnerabilities at severity ${{ inputs.severity }} or above."
+            exit 1
+          fi
