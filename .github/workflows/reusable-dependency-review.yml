@@ -1,0 +1,32 @@
+name: Reusable Dependency Review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        type: string
+        default: 'high'
+        description: >
+          Minimum severity that fails the PR check. One of: low, moderate, high, critical.
+          Production default is 'high' (blocks HIGH + CRITICAL vulnerable deps from being merged).
+          Phased rollout may start at 'critical' (block on CRITICAL only) and tighten over time.
+      comment-summary-in-pr:
+        type: string
+        default: 'on-failure'
+        description: 'always | on-failure | never — whether to post a PR comment summarising findings'
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # required for the PR comment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          comment-summary-in-pr: ${{ inputs.comment-summary-in-pr }}
