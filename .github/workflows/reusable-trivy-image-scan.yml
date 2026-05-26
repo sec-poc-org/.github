@@ -12,27 +12,44 @@ on:
       severity:
         type: string
         default: 'HIGH,CRITICAL'
-        description: Comma-separated severity threshold passed to Trivy (LOW,MEDIUM,HIGH,CRITICAL)
       fail-on-findings:
         type: boolean
         default: false
-        description: >
-          Whether to fail the workflow when Trivy finds vulnerabilities at-or-above `severity`.
-          Phase 3f recommends warm-up as warn-only (false), then tighten in waves.
+      app-owner:
+        type: string
+        default: ''
+        description: GitHub org/user owning the App; leave empty to skip token minting
+      app-repositories:
+        type: string
+        default: ''
+        description: Newline-separated repos for the minted token's scope
+    secrets:
+      APP_ID:
+        required: false
+      APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   trivy-image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write   # for SARIF upload to Code Scanning
+      security-events: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Generate App token
+        if: ${{ inputs.app-owner != '' }}
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ inputs.app-owner }}
+          repositories: ${{ inputs.app-repositories }}
 
       - name: Build image (no push)
         uses: docker/build-push-action@v6
@@ -42,8 +59,10 @@ jobs:
           push: false
           load: true
           tags: localhost/${{ github.event.repository.name }}:pr-scan
+          secrets: |
+            GH_TOKEN=${{ steps.app-token.outputs.token }}
 
-      - name: Trivy image scan (table for log readability)
+      - name: Trivy image scan (table)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: localhost/${{ github.event.repository.name }}:pr-scan
@@ -52,7 +71,7 @@ jobs:
           ignore-unfixed: true
           exit-code: '0'
 
-      - name: Trivy image scan (SARIF for upload)
+      - name: Trivy image scan (SARIF)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: localhost/${{ github.event.repository.name }}:pr-scan
@@ -62,7 +81,7 @@ jobs:
           ignore-unfixed: true
           exit-code: '0'
 
-      - name: Upload SARIF to Code Scanning
+      - name: Upload SARIF
         if: always() && hashFiles('trivy-image.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
