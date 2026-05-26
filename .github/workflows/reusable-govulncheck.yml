@@ -6,56 +6,76 @@ on:
       working-directory:
         type: string
         default: '.'
-        description: Directory containing go.mod
       go-version-file:
         type: string
         default: 'go.mod'
-        description: Path (relative to working-directory) to a file containing the Go version
+      app-owner:
+        type: string
+        default: ''
+        description: GitHub org/user owning the App; leave empty to skip token minting
+      app-repositories:
+        type: string
+        default: ''
+        description: Newline-separated repos for the minted token's scope
+    secrets:
+      APP_ID:
+        required: false
+      APP_PRIVATE_KEY:
+        required: false
 
 jobs:
   govulncheck:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write   # required for SARIF upload to Code Scanning
+      security-events: write
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.working-directory }}/${{ inputs.go-version-file }}
+
+      - name: Generate App token
+        if: ${{ inputs.app-owner != '' }}
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ inputs.app-owner }}
+          repositories: ${{ inputs.app-repositories }}
+
+      - name: Configure git for private modules
+        if: ${{ inputs.app-owner != '' }}
+        run: |
+          git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck (human-readable, for the run log)
+      - name: Run govulncheck
         id: vulncheck
         continue-on-error: true
         run: govulncheck ./...
 
-      - name: Run govulncheck (SARIF, for Code Scanning upload)
+      - name: Run govulncheck (SARIF)
         if: always()
         continue-on-error: true
         run: govulncheck -format sarif ./... > govulncheck.sarif
 
-      - name: Sanitize SARIF (workaround for govulncheck duplicate-tags bug)
-        # govulncheck emits duplicate strings in `properties.tags` for some rules,
-        # which violates the SARIF schema and causes upload-sarif to reject the file:
-        #   "instance.runs[0].tool.driver.rules[N].properties.tags contains duplicate item"
-        # De-duplicate the tags array per rule before uploading.
+      - name: Sanitize SARIF
         if: always() && hashFiles(format('{0}/govulncheck.sarif', inputs.working-directory)) != ''
         run: |
           jq '(.runs[].tool.driver.rules[]?.properties.tags) |= (if . then unique else . end)' \
             govulncheck.sarif > govulncheck.sanitized.sarif
           mv govulncheck.sanitized.sarif govulncheck.sarif
 
-      - name: Upload SARIF to Code Scanning
+      - name: Upload SARIF
         if: always() && hashFiles(format('{0}/govulncheck.sarif', inputs.working-directory)) != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -64,6 +84,4 @@ jobs:
 
       - name: Fail on findings
         if: ${{ steps.vulncheck.outcome == 'failure' }}
-        run: |
-          echo "::error::govulncheck found vulnerabilities reachable from this module."
-          exit 1
+        run: exit 1
